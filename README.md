@@ -7,10 +7,13 @@
 启动前准备：
 
 1. 执行 `mvn -q -DskipTests compile` 验证骨架构建。
-2. 执行 `mvn spring-boot:run` 启动应用；Spring Boot 会自动执行 `src/main/resources/schema.sql`。
+2. 执行 `mvn spring-boot:run` 启动应用；启动时自动完成两处库结构初始化：
+   - **Flyway 迁移**（`src/main/resources/db/migration/`）：租车单相关七表（车辆台账/租车单/交接/事件流水/流转历史/姓名索引/幂等请求）脚本化版本管理；
+   - **`src/main/resources/schema.sql`**（`spring.sql.init`）：其余各表幂等初始化。
 3. H2 数据文件默认写入工作区 `data/evops`。如需修改路径，编辑 `application.yml` 中的 `jdbc:h2:file:` 连接串。
 
-工作区 `docs/schema/evops.sql` 是交付副本，应与工作区 `src/main/resources/schema.sql` 保持一致。
+租车表结构的迁移脚本规范、不可改/可重跑/留档/失败定位约定与配置项默认值，见 `docs/schema/README.md`。
+工作区 `docs/schema/evops.sql` 是 sql.init 脚本的交付副本，应与工作区 `src/main/resources/schema.sql` 保持一致。
 
 ## 租车业务（rental-1）
 

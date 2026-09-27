@@ -30,6 +30,17 @@ spring:
     init:
       mode: always
       schema-locations: classpath:schema.sql
+  # 租车单相关表结构版本管理（rental-schema-1）：与主配置一致，Flyway 接管租车七表，
+  # 脚本见 db/migration；其余表仍由 schema.sql 幂等初始化。规范见 docs/schema/README.md。
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    table: flyway_schema_history
+    baseline-on-migrate: true
+    baseline-version: 0
+    validate-on-migrate: true
+    clean-disabled: true
+    encoding: UTF-8
 
 mybatis-plus:
   mapper-locations: classpath*:mapper/**/*.xml

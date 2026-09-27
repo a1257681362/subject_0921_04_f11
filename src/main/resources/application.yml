@@ -31,6 +31,25 @@ spring:
     init:
       mode: always
       schema-locations: classpath:schema.sql
+  # 租车单相关表结构版本管理（rental-schema-1）：Flyway 接管 t_vehicle / t_rental_order /
+  # t_rental_handover / t_rental_order_event / t_rental_order_transition /
+  # t_rental_order_name_index / t_idempotent_request 七张表，脚本见 db/migration；
+  # 其余表仍由上面 spring.sql.init 的 schema.sql 幂等初始化，两边互不越界。
+  # 命名规范 / 不可改与可重跑约定 / 失败定位 / 配置项默认值，见 docs/schema/README.md。
+  flyway:
+    enabled: true
+    # 迁移脚本目录：V<递增版本>__<说明>.sql；已执行脚本禁止修改（下方校验和兜底）
+    locations: classpath:db/migration
+    # 变更留档表：逐次记录版本/描述/脚本名/校验和/执行耗时/成败
+    table: flyway_schema_history
+    # 存量库接管：无留档表的非空库先打基线标记再执行脚本；V1 全语句幂等，老库执行即收敛
+    baseline-on-migrate: true
+    baseline-version: 0
+    # 已执行脚本不许改：每次启动校验留档校验和与脚本一致，被篡改直接拒绝启动
+    validate-on-migrate: true
+    # 禁用 clean，防误清库
+    clean-disabled: true
+    encoding: UTF-8
 
 mybatis-plus:
   mapper-locations: classpath*:mapper/**/*.xml

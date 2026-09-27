@@ -23,6 +23,10 @@
         <shiro.version>1.13.0</shiro.version>
         <pinyin4j.version>2.5.1</pinyin4j.version>
         <thumbnailator.version>0.4.20</thumbnailator.version>
+        <!-- 迁移失败后手工修复（mvn flyway:repair）的目标库，默认开发文件库；
+             指向其他环境：mvn flyway:repair -Devops.flyway.db.url=jdbc:h2:file:/path/to/db
+             （属性名不能以 flyway. 开头，否则被插件误认为自身配置项） -->
+        <evops.flyway.db.url>jdbc:h2:file:./data/evops;AUTO_SERVER=TRUE</evops.flyway.db.url>
     </properties>
 
     <dependencies>
@@ -67,6 +71,11 @@
             <artifactId>h2</artifactId>
             <scope>runtime</scope>
         </dependency>
+        <!-- 租车单相关表结构版本管理（rental-schema-1）：Flyway 脚本化迁移，版本由 Spring Boot 托管 -->
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-core</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>
@@ -84,6 +93,19 @@
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+            <!-- 租车单表结构版本管理（rental-schema-1）：迁移在应用启动时自动执行，
+                 本插件不绑定构建阶段，仅供迁移失败后的手工修复（mvn flyway:repair）。
+                 规范与排障见 docs/schema/README.md。 -->
+            <plugin>
+                <groupId>org.flywaydb</groupId>
+                <artifactId>flyway-maven-plugin</artifactId>
+                <version>${flyway.version}</version>
+                <configuration>
+                    <url>${evops.flyway.db.url}</url>
+                    <user>sa</user>
+                    <password></password>
+                </configuration>
             </plugin>
         </plugins>
     </build>
