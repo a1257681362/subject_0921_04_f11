@@ -31,6 +31,33 @@ spring:
     init:
       mode: always
       schema-locations: classpath:schema.sql
+  # 租车域表结构版本管理（flyway-rental-1）：Flyway 接管租车单相关 8 表
+  # （t_vehicle/t_rental_order/t_rental_handover/t_rental_order_event/t_rental_order_transition/
+  #   t_rental_order_name_index/t_idempotent_request/t_handover_photo），
+  # 其余域仍由上面 spring.sql.init(schema.sql) 幂等维护，两轨互不重叠。
+  # 命名规范：V<递增整数>__<小写描述，下划线分隔>.sql；已执行脚本禁止修改（checksum 校验），
+  # 变更一律追加新版本脚本。配置项与默认值详见 README「租车域表结构版本管理」。
+  flyway:
+    enabled: true
+    # 迁移脚本目录（固定，缺失即启动失败，见 fail-on-missing-locations）
+    locations: classpath:db/migration
+    # 变更留档表：版本/描述/类型/校验和/执行账号/时间/耗时/成败逐条留痕
+    table: flyway_schema_history
+    # 存量库（无留档表的非空库）首次启动自动登记基线，不重建既有表
+    baseline-on-migrate: true
+    # 基线版本置于 V1 之前：V1 幂等脚本在存量库也会执行一遍（IF NOT EXISTS 空转并自愈漂移），
+    # 保证基线与存量结构一致、新建库与存量库最终结构一致
+    baseline-version: 0
+    baseline-description: 存量库基线（租车域表结构已由 schema.sql 建齐）
+    # 启动迁移前校验已执行脚本 checksum：已执行脚本被改动即拒绝启动（已执行脚本不许改）
+    validate-on-migrate: true
+    # 固定按版本号顺序执行，不允许乱序补插
+    out-of-order: false
+    # 禁止 clean 命令（防误清库）
+    clean-disabled: true
+    # 脚本目录缺失即快速失败（防配置写错静默跳过迁移）
+    fail-on-missing-locations: true
+    encoding: UTF-8
 
 mybatis-plus:
   mapper-locations: classpath*:mapper/**/*.xml

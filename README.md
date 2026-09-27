@@ -7,10 +7,10 @@
 启动前准备：
 
 1. 执行 `mvn -q -DskipTests compile` 验证骨架构建。
-2. 执行 `mvn spring-boot:run` 启动应用；Spring Boot 会自动执行 `src/main/resources/schema.sql`。
+2. 执行 `mvn spring-boot:run` 启动应用；建表自动完成：租车域 8 表由 Flyway 版本化迁移（`src/main/resources/db/migration/`，见文末「租车域表结构版本管理」），其余域表由 `src/main/resources/schema.sql` 幂等维护。
 3. H2 数据文件默认写入工作区 `data/evops`。如需修改路径，编辑 `application.yml` 中的 `jdbc:h2:file:` 连接串。
 
-工作区 `docs/schema/evops.sql` 是交付副本，应与工作区 `src/main/resources/schema.sql` 保持一致。
+工作区 `docs/schema/evops.sql` 是 `src/main/resources/schema.sql` 的交付副本，应保持一致；租车域表结构的交付物为 `src/main/resources/db/migration/` 下的 Flyway 版本脚本。
 
 ## 租车业务（rental-1）
 
@@ -578,3 +578,68 @@ CLOSED 后发现数据问题 --只能追加--> 冲正单（t_turnover_correction
 ### 测试
 
 `mvn test`：新增 12 个集成用例覆盖占位成功与 25 分钟锁位截止、结束早于开始拒绝、完全重叠 409 带最近空档（11:12 起、时长不变）、缓冲边界（12 分钟允许/11 分钟拒绝，前后两侧）、可用性视图、确认成功与确认幂等、超时确认 409 且占位 EXPIRED、取消释放后同窗可重约、周期释放超时占位与二次扫描幂等、未扫描时新占位懒释放、同一辆车并发占位恰一个成功+败者拿冲突、车辆不存在/停用拦截。
+
+## 租车域表结构版本管理（flyway-rental-1）
+
+背景：租车单相关表结构此前靠 `schema.sql` 全量幂等脚本维护——没有版本号、改了什么不可追溯、已执行脚本被回改也发现不了，交接出现断点，网点出数受影响。本期把租车域 8 表移交 Flyway 版本管理：**脚本化、命名规范固定、已执行脚本不许改、升级可重跑、变更逐条留档、失败定位到脚本行、基线与存量结构一致**。
+
+### 管理范围（两轨互不重叠）
+
+| 轨道 | 范围 | 机制 |
+| --- | --- | --- |
+| Flyway 版本迁移（`src/main/resources/db/migration/`） | 租车域 8 表：`t_vehicle`、`t_rental_order`、`t_rental_handover`、`t_rental_order_event`、`t_rental_order_transition`、`t_rental_order_name_index`、`t_idempotent_request`、`t_handover_photo` | 版本脚本，应用启动时自动迁移 |
+| `spring.sql.init`（`schema.sql`） | 其余域全部表（网点/对账/定位往来/账号会话/周转率/档期）与骨架版本表 `t_evops_schema_version` | 维持原幂等脚本不变 |
+
+### 基线与存量结构一致
+
+- `V1__rental_baseline.sql` = 既有 `schema.sql` 在新建库上产出的租车域最终结构（收编 rental-1、rental-name-search-1、rental-fsm-1、photo-1 及 turnover-1 车辆网点列的演进结果）；
+- **存量库**首次启动：`baseline-on-migrate` 自动登记基线（版本 0），随后 V1 以全幂等写法（`IF NOT EXISTS`）空转一遍——不重建既有表、不动业务数据，个别库如有漂移顺带自愈；
+- **新建库**：直接由 V1 建表，与存量库最终结构一致；
+- 历史演进不伪造版本：统一收编进 V1 基线，后续变更从 V2 起逐版本追加。
+
+### 命名规范（固定）
+
+- 版本脚本：`V<递增整数>__<小写描述，单词以下划线分隔>.sql`，如 `V2__rental_order_add_pickup_mileage.sql`；
+- 一个变更一个脚本，版本号连续递增、严格按序执行（`out-of-order=false`）；
+- **已执行脚本不许改**：`validate-on-migrate=true`，启动时校验已执行脚本 checksum，被回改即拒绝启动并指明脚本；修正只能追加新版本脚本；
+- **升级可重跑**：脚本一律幂等写法（`CREATE ... IF NOT EXISTS` / `DROP ... IF EXISTS` / 守护式 ALTER），已执行版本自动跳过；单个脚本在事务内执行，失败整体回滚后可安全重跑。
+
+### 变更记录留档
+
+- `flyway_schema_history` 表逐条留痕：版本、描述、脚本名、类型、checksum、执行账号、执行时间、耗时、成功与否；
+- 旧骨架版本表 `t_evops_schema_version` 不再登记租车域（既有历史行保留不删），其余域照旧登记。
+
+### 失败定位到脚本行
+
+迁移失败即启动失败，错误明细带 **脚本名 + 行号 + 出错语句 + SQL State**，形如：
+
+```
+Migration V2__rental_order_add_xxx.sql failed
+SQL State  : 42000
+Message    : Syntax error in SQL statement ...
+Location   : db/migration/V2__rental_order_add_xxx.sql
+Line       : 17
+Statement  : ALTER TABLE ...
+```
+
+按 `Line` 行号打开对应脚本即可定位；修复后直接重启，失败脚本已回滚，重跑安全。
+
+### 配置项与默认值
+
+| 配置 | 默认 | 说明 |
+| --- | --- | --- |
+| `spring.flyway.enabled` | `true` | 总开关；`false` 时回退为仅 `schema.sql`（租车域不再建表，仅限应急排障） |
+| `spring.flyway.locations` | `classpath:db/migration` | 迁移脚本目录（固定） |
+| `spring.flyway.table` | `flyway_schema_history` | 变更留档表名 |
+| `spring.flyway.baseline-on-migrate` | `true` | 存量非空库首次启动自动登记基线，不重建既有表 |
+| `spring.flyway.baseline-version` | `0` | 基线版本置于 V1 之前：V1 幂等脚本在存量库也执行一遍（空转并自愈漂移） |
+| `spring.flyway.baseline-description` | `存量库基线（租车域表结构已由 schema.sql 建齐）` | 基线留档描述 |
+| `spring.flyway.validate-on-migrate` | `true` | 启动校验已执行脚本 checksum，被回改即拒绝启动 |
+| `spring.flyway.out-of-order` | `false` | 固定按版本号顺序执行，不允许乱序补插 |
+| `spring.flyway.clean-disabled` | `true` | 禁止 `clean`，防误清库 |
+| `spring.flyway.fail-on-missing-locations` | `true` | 脚本目录缺失即快速失败，防配置写错静默跳过迁移 |
+| `spring.flyway.encoding` | `UTF-8` | 迁移脚本字符集 |
+
+### 测试
+
+`mvn test`：新增 5 个用例——基线建表与存量结构一致（8 表齐备/网点列收编/状态列扩容 32/订单号唯一约束）、变更留档要素齐全（版本/脚本/校验和/执行账号/耗时/成败）、重复迁移空转（升级可重跑）、checksum 校验通过（已执行脚本不许改）、旧版本表移交（租车域不再登记、其余域照旧）；另有独立用例验证坏脚本报错含脚本名与出错行号（失败定位到脚本行）。既有用例零改动回归。
